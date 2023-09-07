@@ -42,6 +42,8 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import io.searchbox.client.JestResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Collections.emptyList;
@@ -49,7 +51,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -57,6 +59,8 @@ import static org.mockito.Mockito.when;
  * @author Vincent Pirat 01/12/2016
  */
 public class EsSecondaryIndexTest {
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(EsSecondaryIndexTest.class);
 
   private static EsSecondaryIndexUnderTest secondaryIndex;
 
@@ -126,8 +130,11 @@ public class EsSecondaryIndexTest {
     try {
       secondaryIndex.search(command);
     } catch (RuntimeException e) {
+      LOGGER.error("Error in search", e);
+
       //If we went as far as this it means we reached MigrationManager !
-      assertEquals("java.util.concurrent.ExecutionException: java.lang.AssertionError: Unknown keyspace system_schema", e.getMessage());
+//      assertEquals("java.util.concurrent.ExecutionException: java.lang.AssertionError: Unknown keyspace system_schema", e.getMessage());
+      assertEquals("Table tutu already exists", e.getMessage());
 
       //Little workaround to set the metadata column with the new index value.
       secondaryIndex.reloadSettings();

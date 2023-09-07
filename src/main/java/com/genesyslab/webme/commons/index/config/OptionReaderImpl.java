@@ -51,8 +51,8 @@ public class OptionReaderImpl implements OptionReader {
   private static final String[] FILES = {"/es-index.properties", "es-index.properties"};
   private static final String[] FOLDERS = {".", "./conf/", "../conf/", "./bin/"};
 
-  private final String dcName = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddress());
-  private final String rackName = DatabaseDescriptor.getEndpointSnitch().getRack(FBUtilities.getBroadcastAddress());
+  private final String dcName = DatabaseDescriptor.getEndpointSnitch().getDatacenter(FBUtilities.getBroadcastAddressAndPort());
+  private final String rackName = DatabaseDescriptor.getEndpointSnitch().getRack(FBUtilities.getBroadcastAddressAndPort());
   private final String indexName;
   private Map<String, String> options = new HashMap<>();
 

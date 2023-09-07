@@ -16,6 +16,7 @@
 package com.genesyslab.webme.commons.index.requests;
 
 import io.searchbox.action.GenericResultAbstractAction;
+import io.searchbox.client.config.ElasticsearchVersion;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -33,7 +34,6 @@ public class GenericRequest extends GenericResultAbstractAction {
     this.payload = payload;
     this.method = method;
     this.url = url;
-    setURI(buildURI());
   }
 
   @Override
@@ -42,7 +42,7 @@ public class GenericRequest extends GenericResultAbstractAction {
   }
 
   @Override
-  protected String buildURI() {
+  protected String buildURI(ElasticsearchVersion version) {
     return url;
   }
 }

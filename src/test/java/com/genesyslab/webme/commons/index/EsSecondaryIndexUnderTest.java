@@ -17,32 +17,31 @@ package com.genesyslab.webme.commons.index;
 
 import com.google.common.collect.ImmutableMap;
 
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.ColumnDefinition;
+
 import org.apache.cassandra.config.Config;
 import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.config.DurationSpec;
 import org.apache.cassandra.config.ParameterizedClass;
-import org.apache.cassandra.config.Schema;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Directories;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.marshal.UTF8Type;
 import org.apache.cassandra.dht.Murmur3Partitioner;
-import org.apache.cassandra.schema.IndexMetadata;
-import org.apache.cassandra.schema.KeyspaceMetadata;
-import org.apache.cassandra.schema.KeyspaceParams;
-import org.apache.cassandra.schema.ReplicationParams;
+import org.apache.cassandra.io.sstable.SequenceBasedSSTableId;
+import org.apache.cassandra.schema.*;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.junit.rules.TemporaryFolder;
+import org.apache.cassandra.schema.SchemaTestUtils;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
-import static org.apache.cassandra.config.ColumnDefinition.Kind.REGULAR;
-import static org.apache.cassandra.config.ColumnDefinition.NO_POSITION;
-import static org.apache.cassandra.cql3.statements.IndexTarget.CUSTOM_INDEX_OPTION_NAME;
-import static org.apache.cassandra.cql3.statements.IndexTarget.TARGET_OPTION_NAME;
+import static org.apache.cassandra.schema.ColumnMetadata.Kind.REGULAR;
+import static org.apache.cassandra.schema.ColumnMetadata.NO_POSITION;
+import static org.apache.cassandra.cql3.statements.schema.IndexTarget.CUSTOM_INDEX_OPTION_NAME;
+import static org.apache.cassandra.cql3.statements.schema.IndexTarget.TARGET_OPTION_NAME;
 
 /**
  * @author Vincent Pirat 01/12/2016
@@ -63,7 +62,7 @@ public class EsSecondaryIndexUnderTest extends EsSecondaryIndex {
       conf.memtable_flush_writers = 1;
       conf.concurrent_compactors = 1;
       conf.commitlog_sync = Config.CommitLogSync.periodic;
-      conf.commitlog_sync_period_in_ms = 100000;
+      conf.commitlog_sync_period = new DurationSpec.IntMillisecondsBound(100000l, TimeUnit.MILLISECONDS);
       conf.partitioner = "RandomPartitioner";
       conf.endpoint_snitch = "SimpleSnitch";
       conf.commitlog_directory = tempDir.getCanonicalPath().concat("/commit");
@@ -93,15 +92,15 @@ public class EsSecondaryIndexUnderTest extends EsSecondaryIndex {
         .put("replication_factor", "3")
         .build()))));
 
-  static final CFMetaData cfMetaData = CFMetaData.Builder.create(keyspaceName, tableName)
-    .withPartitioner(Murmur3Partitioner.instance)
-    .addPartitionKey(ID_COL, UTF8Type.instance)
+  static final TableMetadata cfMetaData =  TableMetadata.builder(keyspaceName, tableName)
+    .partitioner(Murmur3Partitioner.instance)
+    .addPartitionKeyColumn(ID_COL, UTF8Type.instance)
     .addRegularColumn(VALUE_COL, UTF8Type.instance)
     .addRegularColumn(ES_COL, UTF8Type.instance)
     .build();
 
-  private static final ColumnFamilyStore baseCfs = new ColumnFamilyStore(keyspace, tableName, 0, cfMetaData,
-    new Directories(cfMetaData), false, false, true);
+  private static final ColumnFamilyStore baseCfs = new ColumnFamilyStore(keyspace, tableName, () -> { return new SequenceBasedSSTableId(0);},
+          TableMetadataRef.forOfflineTools(cfMetaData), new Directories(cfMetaData), false, false, true);
 
   private static final Map<String, String> options = ImmutableMap.<String, String>builder()
     .put(CUSTOM_INDEX_OPTION_NAME, "com.genesyslab.webme.commons.index.EsSecondaryIndex")
@@ -113,13 +112,15 @@ public class EsSecondaryIndexUnderTest extends EsSecondaryIndex {
 
   static { //Make sure you don't change static block order: this block is just before constructor
     Keyspace.setInitialized();
-    Schema.instance.storeKeyspaceInstance(keyspace);
-    Schema.instance.addKeyspace(keyspace.getMetadata());
-    Schema.instance.addTable(cfMetaData);
+    Schema.instance.maybeAddKeyspaceInstance(keyspaceName, () -> keyspace);
+    SchemaTestUtils.announceNewKeyspace(keyspace.getMetadata());
+    SchemaTestUtils.announceNewTable(cfMetaData);
 
-    ColumnDefinition idxColDef = new ColumnDefinition(cfMetaData, ByteBufferUtil.bytes(ES_COL), UTF8Type.instance, NO_POSITION, REGULAR);
-    indexMetadata = IndexMetadata.fromLegacyMetadata(cfMetaData, idxColDef, TEST_INDEX, IndexMetadata.Kind.CUSTOM, options);
-    cfMetaData.indexes(cfMetaData.getIndexes().with(indexMetadata));
+    ColumnMetadata idxColDef = new ColumnMetadata(cfMetaData, ByteBufferUtil.bytes(ES_COL), UTF8Type.instance, NO_POSITION, REGULAR);
+    indexMetadata = IndexMetadata.fromSchemaMetadata(TEST_INDEX, IndexMetadata.Kind.CUSTOM, options);
+    cfMetaData.indexes.of(indexMetadata);
+
+
   }
 
   public static void staticInit() {

@@ -7,7 +7,7 @@
 
     <groupId>com.genesys</groupId>
     <artifactId>es-index</artifactId>
-    <version>9.1.003.00</version>
+    <version>9.1.004.00</version>
     <packaging>jar</packaging>
 
     <name>es-index</name>
@@ -65,10 +65,11 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Compile -->
-        <version.cassandra.esindex>4.0.10</version.cassandra.esindex>
-        <version.jest>5.3.2</version.jest>
+        <version.cassandra.esindex>4.1.0</version.cassandra.esindex>
+        <version.jest>6.3.1</version.jest>
         <version.google.gson>2.8.9</version.google.gson>
         <version.findbugs.annotations>3.0.1u2</version.findbugs.annotations>
+        <version.jackson>1.9.13</version.jackson>
 
         <!-- Test -->
         <version.junit>4.13.1</version.junit>
@@ -100,6 +101,12 @@
                     <artifactId>httpcore</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.codehaus.jackson</groupId>
+            <artifactId>jackson-mapper-asl</artifactId>
+            <version>${version.jackson}</version>
         </dependency>
 
         <!-- Elasticsearch Jest Client -->

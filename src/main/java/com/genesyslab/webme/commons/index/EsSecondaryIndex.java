@@ -28,18 +28,13 @@ import com.google.common.base.Stopwatch;
 import com.google.common.base.Strings;
 import com.google.gson.JsonObject;
 
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.ColumnDefinition;
+
 import org.apache.cassandra.cql3.ColumnIdentifier;
 import org.apache.cassandra.cql3.Operator;
-import org.apache.cassandra.cql3.statements.IndexTarget;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.ConsistencyLevel;
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.EmptyIterators;
-import org.apache.cassandra.db.PartitionColumns;
-import org.apache.cassandra.db.PartitionRangeReadCommand;
-import org.apache.cassandra.db.ReadCommand;
+import org.apache.cassandra.cql3.QualifiedName;
+import org.apache.cassandra.cql3.statements.schema.AlterTableStatement;
+import org.apache.cassandra.cql3.statements.schema.IndexTarget;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.compaction.OperationType;
 import org.apache.cassandra.db.filter.RowFilter;
 import org.apache.cassandra.db.marshal.AbstractType;
@@ -49,19 +44,20 @@ import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.exceptions.ConfigurationException;
 import org.apache.cassandra.exceptions.InvalidRequestException;
 import org.apache.cassandra.index.Index;
 import org.apache.cassandra.index.IndexRegistry;
 import org.apache.cassandra.index.transactions.IndexTransaction;
 import org.apache.cassandra.io.sstable.Descriptor;
 import org.apache.cassandra.io.sstable.format.SSTableFlushObserver;
-import org.apache.cassandra.schema.IndexMetadata;
-import org.apache.cassandra.service.MigrationManager;
+import org.apache.cassandra.schema.*;
+//import org.apache.cassandra.service.MigrationManager;
+import org.apache.cassandra.service.ClientState;
 import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.Pair;
-import org.apache.cassandra.utils.concurrent.OpOrder.Group;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,7 +109,7 @@ public class EsSecondaryIndex implements Index {
   @Nonnull
   final IndexInterface esIndex;
   private final SecureRandom random = new SecureRandom();
-  private final ColumnDefinition indexColDef;
+  private final ColumnMetadata indexColDef;
   private final boolean isDummyMode;
   private IndexMetadata indexMetadata;
   private List<String> partitionKeysNames;
@@ -133,11 +129,9 @@ public class EsSecondaryIndex implements Index {
       this.baseCfs = sourceCfs;
       this.indexMetadata = indexMetadata;
       indexColumnName = unQuote(this.indexMetadata.options.get(IndexTarget.TARGET_OPTION_NAME));
-      indexColDef = baseCfs.metadata.getColumnDefinition(ColumnIdentifier.getInterned(indexColumnName, true));
-      name = "EsSecondaryIndex [" + baseCfs.metadata.ksName + "." + this.indexMetadata.name + "]";
+      indexColDef = baseCfs.metadata.get().getColumn(ColumnIdentifier.getInterned(indexColumnName, true));
+      name = "EsSecondaryIndex [" + baseCfs.metadata.keyspace + "." + this.indexMetadata.name + "]";
       indexConfig = new IndexConfiguration(name, indexMetadata.options);
-
-      LOGGER.info("Creating {} with options {}", name, indexConfig.getIndexOptions());
 
       IndexInterface index;
 
@@ -147,14 +141,14 @@ public class EsSecondaryIndex implements Index {
           index = new EsDummyIndex();
         } else {
           LOGGER.warn("EsSecondaryIndex {} initializing #{}", name, Integer.toHexString(hashCode()));
-          partitionKeysNames = Collections.unmodifiableList(CStarUtils.getPartitionKeyNames(baseCfs.metadata));
-          clusteringColumnsNames = Collections.unmodifiableList(CStarUtils.getClusteringColumnsNames(baseCfs.metadata));
+          partitionKeysNames = Collections.unmodifiableList(CStarUtils.getPartitionKeyNames(baseCfs.metadata.get()));
+          clusteringColumnsNames = Collections.unmodifiableList(CStarUtils.getClusteringColumnsNames(baseCfs.metadata.get()));
 
           LOGGER.debug("ReadConsistencyLevel is '{}', skip startup log replay:{}, skip non local updates:{}",
             readConsistencyLevel, skipLogReplay, skipNonLocalUpdates);
 
           hasClusteringColumns = !clusteringColumnsNames.isEmpty();
-          index = new ElasticIndex(indexConfig, baseCfs.metadata.ksName, baseCfs.name, partitionKeysNames, clusteringColumnsNames);
+          index = new ElasticIndex(indexConfig, baseCfs.metadata.keyspace, baseCfs.name, partitionKeysNames, clusteringColumnsNames);
           index.init();
           LOGGER.warn("Initialized {} ", name);
         }
@@ -195,7 +189,8 @@ public class EsSecondaryIndex implements Index {
     Tracing.trace("ESI decoding row {}", id); //This is CQL "tracing on" support
 
     try {
-      List<Pair<String, String>> partitionKeys = CStarUtils.getPartitionKeys(decoratedKey.getKey(), baseCfs.metadata);
+      List<Pair<String, String>> partitionKeys = CStarUtils.getPartitionKeys(decoratedKey.getKey(), baseCfs.metadata.get());
+      LOGGER.debug("PartitionKeys: {}", partitionKeys);
       List<CellElement> elements = new ArrayList<>();
 
       for (Cell cell : newRow.cells()) {
@@ -203,13 +198,14 @@ public class EsSecondaryIndex implements Index {
 
           // Skip the cells with empty name (row marker) // looks like isEmpty() now (2.2?) returns false with empty string
           String cellName = cell.column().name.toString();
+          LOGGER.debug("CellName:{} Cell:{}", cellName, cell);
 
           if (!Strings.isNullOrEmpty(cellName)) {  // Skip the cells with empty name (row marker)
             CellElement element = new CellElement();
             element.name = cellName;
 
             if (hasClusteringColumns) {
-              element.clusteringKeys = CStarUtils.getClusteringKeys(newRow, baseCfs.metadata, clusteringColumnsNames);
+              element.clusteringKeys = CStarUtils.getClusteringKeys(newRow, baseCfs.metadata.get(), clusteringColumnsNames);
             }
 
             if (CStarUtils.isCollection(cell)) {
@@ -227,7 +223,7 @@ public class EsSecondaryIndex implements Index {
         LOGGER.debug("{} skip empty update for row {}", name, id);
 
       } else {
-        if (DEBUG_SHOW_VALUES) {
+        if (true) {
           LOGGER.debug("{} indexing row {} content:{}", name, id, newRow);
         } else {
           LOGGER.debug("{} indexing row {}", name, id);
@@ -258,7 +254,7 @@ public class EsSecondaryIndex implements Index {
         return;
       }
 
-      esIndex.delete(CStarUtils.getPartitionKeys(decoratedKey.getKey(), baseCfs.metadata));
+      esIndex.delete(CStarUtils.getPartitionKeys(decoratedKey.getKey(), baseCfs.metadata.get()));
     } catch (Exception e) {
       LOGGER.error("{} can't delete row {} {}", name, id, e);
       throw new RuntimeException(e);
@@ -290,18 +286,7 @@ public class EsSecondaryIndex implements Index {
   public Callable<?> getInitializationTask() { //This is done when starting Cassandra or when creating an index with CQL command
     return () -> {
       if (esIndex.isNewIndex()) { //FIXME will this rebuild all data since we only have ssTables for our replicas?
-        if (indexAvailableWhenBuilding) {
-          LOGGER.info("{} marking index as built while rebuilding is in progress", name);
-          baseCfs.indexManager.markIndexBuilt(indexMetadata.name);
-          new EsIndexBuilder(EsSecondaryIndex.this).build();
-        } else {
-          LOGGER.info("{} index rebuild completed, marking as built", name);
-          new EsIndexBuilder(EsSecondaryIndex.this).build();
-          baseCfs.indexManager.markIndexBuilt(indexMetadata.name);
-        }
-      } else {
-        LOGGER.debug("{} already exists, nothing to rebuild", name);
-        baseCfs.indexManager.markIndexBuilt(indexMetadata.name);
+        new EsIndexBuilder(EsSecondaryIndex.this).build();
       }
       return null;
     };
@@ -359,12 +344,12 @@ public class EsSecondaryIndex implements Index {
   }
 
   @Override
-  public boolean dependsOn(ColumnDefinition column) {
+  public boolean dependsOn(ColumnMetadata column) {
     return DEPENDS_ON_COLUMN_DEFINITION;
   }
 
   @Override
-  public boolean supportsExpression(ColumnDefinition column, Operator operator) {
+  public boolean supportsExpression(ColumnMetadata column, Operator operator) {
     return true; //We support any kind of C* expressions because it's actually in the ES query.
   }
 
@@ -390,7 +375,7 @@ public class EsSecondaryIndex implements Index {
   }
 
   @Override
-  public Indexer indexerFor(DecoratedKey key, PartitionColumns columns, int nowInSec, Group opGroup, IndexTransaction.Type txType) {
+  public Indexer indexerFor(DecoratedKey key, RegularAndStaticColumns columns, int nowInSec, WriteContext opGroup, IndexTransaction.Type txType) {
     if (isDummyMode) {
       return NoOpIndexer.INSTANCE; //Dummy mode
     }
@@ -447,7 +432,7 @@ public class EsSecondaryIndex implements Index {
 
     if (queryString.startsWith(UPDATE)) {
       handleUpdateCommand(queryString.substring(UPDATE.length(), queryString.length() - 1));
-      return EmptyIterators.unfilteredPartition(command.metadata(), command.isForThrift());
+      return EmptyIterators.unfilteredPartition(command.metadata());
     }
 
     if (!(command instanceof PartitionRangeReadCommand)) {
@@ -476,7 +461,7 @@ public class EsSecondaryIndex implements Index {
     Tracing.trace("ESI {} Found {} matching ES docs in {}ms", searchId, searchResult.items.size(), time.elapsed(TimeUnit.MILLISECONDS));
 
     if (searchResult.items.isEmpty()) {
-      return EmptyIterators.unfilteredPartition(command.metadata(), command.isForThrift());
+      return EmptyIterators.unfilteredPartition(command.metadata());
     }
 
     fillPartitionAndClusteringKeys(searchResult.items);
@@ -521,7 +506,7 @@ public class EsSecondaryIndex implements Index {
 
     String additionalMapping = queryString.substring(PUT_MAPPING.length(), queryString.length() - 1);
     esIndex.putMapping(indexName(), additionalMapping);
-    return EmptyIterators.unfilteredPartition(readCommand.metadata(), readCommand.isForThrift());
+    return EmptyIterators.unfilteredPartition(readCommand.metadata());
   }
 
   private void handleUpdateCommand(String newSettings) {
@@ -563,7 +548,7 @@ public class EsSecondaryIndex implements Index {
         clusteringKeys = null;
       }
 
-      searchResultRow.partitionKey = CStarUtils.getPartitionKeys(partitionKeys, baseCfs.metadata);
+      searchResultRow.partitionKey = CStarUtils.getPartitionKeys(partitionKeys, baseCfs.metadata.get());
       searchResultRow.clusteringKeys = clusteringKeys;
     }
   }
@@ -580,15 +565,31 @@ public class EsSecondaryIndex implements Index {
     options.put(IndexTarget.CUSTOM_INDEX_OPTION_NAME, indexMetadata.options.get(IndexTarget.CUSTOM_INDEX_OPTION_NAME));
     options.put(IndexTarget.TARGET_OPTION_NAME, indexMetadata.options.get(IndexTarget.TARGET_OPTION_NAME));
 
-    CFMetaData newMetaData = baseCfs.metadata.copy();
+    TableMetadata newMetaData = baseCfs.metadata.get();
     IndexMetadata newIndexMetadata = IndexMetadata.fromSchemaMetadata(indexMetadata.name, indexMetadata.kind, options);
-    newMetaData.indexes(newMetaData.getIndexes().replace(newIndexMetadata));
+    newMetaData.indexes.with(newIndexMetadata);
 
     indexMetadata = newIndexMetadata; //assume update will work, helps for UTs
-    MigrationManager.announceColumnFamilyUpdate(newMetaData, false);
+    //FIXME replace MigrationManager with cassandra 4 alternative
+    announceTableUdpate(newMetaData);
   }
 
-  public ColumnDefinition getIndexColDef() {
+  private void announceTableUdpate(TableMetadata tableMetadata) {
+    tableMetadata.validate();
+
+    TableMetadata exising = Schema.instance.getTableMetadata(tableMetadata.keyspace, tableMetadata.name);
+    KeyspaceMetadata keyspaceMetadata = Schema.instance.getKeyspaceMetadata(tableMetadata.keyspace);
+    if (exising == null) {
+      throw new ConfigurationException(String.format("Table does not existing:{}", tableMetadata.name));
+    }
+
+    LOGGER.info("Updating table:{} from : {} to : {}", tableMetadata.name, exising, tableMetadata);
+    Schema.instance.transform(
+            schema -> schema.withAddedOrUpdated(keyspaceMetadata
+                    .withSwapped(keyspaceMetadata.tables.with(tableMetadata))));
+  }
+
+  public ColumnMetadata getIndexColDef() {
     return indexColDef;
   }
 

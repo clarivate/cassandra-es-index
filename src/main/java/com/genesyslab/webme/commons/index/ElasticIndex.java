@@ -21,10 +21,26 @@ import com.genesyslab.webme.commons.index.requests.ElasticClientFactory;
 import com.genesyslab.webme.commons.index.requests.GenericRequest;
 import com.genesyslab.webme.commons.index.requests.ResponseHandler;
 import com.genesyslab.webme.commons.index.requests.UpdatePipeline;
-
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
+import io.searchbox.action.Action;
+import io.searchbox.client.JestClient;
+import io.searchbox.client.JestClientFactory;
+import io.searchbox.client.JestResult;
+import io.searchbox.client.config.HttpClientConfig;
+import io.searchbox.cluster.Health;
+import io.searchbox.core.*;
+import io.searchbox.indices.CreateIndex;
+import io.searchbox.indices.DeleteIndex;
+import io.searchbox.indices.Flush;
+import io.searchbox.indices.IndicesExists;
+import io.searchbox.indices.aliases.AddAliasMapping;
+import io.searchbox.indices.aliases.AliasMapping;
+import io.searchbox.indices.aliases.GetAliases;
+import io.searchbox.indices.aliases.ModifyAliases;
+import io.searchbox.indices.mapping.GetMapping;
+import io.searchbox.indices.mapping.PutMapping;
+import io.searchbox.indices.settings.UpdateSettings;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.exceptions.CassandraException;
 import org.apache.cassandra.exceptions.ConfigurationException;
@@ -44,36 +60,8 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.searchbox.action.Action;
-import io.searchbox.client.JestClient;
-import io.searchbox.client.JestClientFactory;
-import io.searchbox.client.JestResult;
-import io.searchbox.client.config.HttpClientConfig;
-import io.searchbox.cluster.Health;
-import io.searchbox.core.Count;
-import io.searchbox.core.CountResult;
-import io.searchbox.core.Delete;
-import io.searchbox.core.DeleteByQuery;
-import io.searchbox.core.DocumentResult;
-import io.searchbox.core.Index;
-import io.searchbox.core.Search;
-import io.searchbox.core.Update;
-import io.searchbox.core.Validate;
-import io.searchbox.indices.CreateIndex;
-import io.searchbox.indices.DeleteIndex;
-import io.searchbox.indices.Flush;
-import io.searchbox.indices.IndicesExists;
-import io.searchbox.indices.aliases.AddAliasMapping;
-import io.searchbox.indices.aliases.AliasMapping;
-import io.searchbox.indices.aliases.GetAliases;
-import io.searchbox.indices.aliases.ModifyAliases;
-import io.searchbox.indices.mapping.GetMapping;
-import io.searchbox.indices.mapping.PutMapping;
-import io.searchbox.indices.settings.UpdateSettings;
-
 import javax.annotation.Nonnull;
 import javax.net.ssl.SSLContext;
-
 import java.io.IOException;
 import java.io.StringWriter;
 import java.lang.reflect.Constructor;
@@ -81,14 +69,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -192,6 +173,7 @@ public class ElasticIndex implements IndexInterface {
   private boolean insertOnly;
   private int httpPort;
   private boolean isV6 = true; //v6 or less
+  private int majorVersion;
 
   ElasticIndex(@Nonnull IndexConfig indexConfig, @Nonnull String indexName, @Nonnull String tableName,
     @Nonnull List<String> partitionKeysNames, @Nonnull List<String> clusteringColumnsNames) throws ConfigurationException {
@@ -216,7 +198,7 @@ public class ElasticIndex implements IndexInterface {
       esUrls.add(host);
     }
 
-    int timeout = (int) Math.max(DatabaseDescriptor.getWriteRpcTimeout(), DatabaseDescriptor.getReadRpcTimeout());
+    int timeout = (int) Math.max(DatabaseDescriptor.getWriteRpcTimeout(TimeUnit.MILLISECONDS), DatabaseDescriptor.getReadRpcTimeout(TimeUnit.MILLISECONDS));
     int maxCon = DatabaseDescriptor.getConcurrentWriters() + DatabaseDescriptor.getConcurrentReaders();
 
     LOGGER.info("Request timeout: {}ms, max connections: {}, discovery: {}m", timeout, maxCon, DISCOVERY_FREQ);
@@ -308,7 +290,7 @@ public class ElasticIndex implements IndexInterface {
       }
     }
 
-    LOGGER.info("ElasticIndex '{}' type '{}' initialization", indexManager.getAliasName(), typeName);
+    LOGGER.debug("ElasticIndex '{}' type '{}' initialization", indexManager.getAliasName(), typeName);
 
     // We now wait for the yellow (or green) status
     JestResult res = execute(new Health.Builder().waitForStatus(Health.Status.YELLOW).build()).waitForSuccess();
@@ -316,8 +298,9 @@ public class ElasticIndex implements IndexInterface {
 
     JsonObject version = execute(new GenericRequest("GET", "/", null)).waitForSuccess().getJsonObject().getAsJsonObject("version");
     String number = version.get("number").getAsString();
-    LOGGER.info("Connected to Elasticsearch version {}", number);
-    isV6 = Integer.parseInt(number.substring(0, 1)) < 7;
+    LOGGER.debug("Connected to Elasticsearch version {}", number);
+    majorVersion = Integer.parseInt(number.substring(0, 1));
+    isV6 = majorVersion < 7;
 
     setupIndex(indexManager.getCurrentName()); // Will create the ES index if needed
 
@@ -347,8 +330,7 @@ public class ElasticIndex implements IndexInterface {
     if (!isV6 && !indexProperties.has("settings")) {
       LOGGER.warn("Received dotted index properties, converting to structured json compatible with ES v7");
       JsonObject settings = dotedToStructured(indexProperties);
-      indexProperties = new JsonObject();
-      indexProperties.add("settings", settings);
+      indexProperties = settings;
     }
 
     boolean indexExists = execute(new IndicesExists.Builder(indexName).build()).waitForResult().isSucceeded();
@@ -367,9 +349,9 @@ public class ElasticIndex implements IndexInterface {
       if (updatableProperties.size() == 0) {
         LOGGER.debug("No settings to update");
       } else {
-        LOGGER.info("Applying updatable settings from cfg {}", updatableProperties);
+        LOGGER.debug("Applying updatable settings from cfg {}", updatableProperties);
         JestResult res = execute(new UpdateSettings.Builder(updatableProperties).addIndex(indexName).build()).waitForSuccess();
-        LOGGER.info("Index settings update result is: {}", res.isSucceeded());
+        LOGGER.debug("Index settings update result is: {}", res.isSucceeded());
       }
     } else {
       LOGGER.warn("Index '{}' does not exist, creating...", indexName);
@@ -459,8 +441,9 @@ public class ElasticIndex implements IndexInterface {
 
   private void indexInternal(List<Pair<String, String>> partitionKeys, List<CellElement> elements, long expirationTime)
     throws IOException {
-
+    LOGGER.debug("IndexInternal - Partition Keys: {}, Elements: {}", partitionKeys, elements);
     Map<String, List<CellElement>> groupedMap = group(partitionKeys, elements);
+    LOGGER.debug("GroupedMap: {}", groupedMap);
 
     for (Map.Entry<String, List<CellElement>> entry : groupedMap.entrySet()) {
       update(partitionKeys, entry.getKey(), entry.getValue(), expirationTime);
@@ -481,7 +464,7 @@ public class ElasticIndex implements IndexInterface {
 
       boolean clusteringKeysSet = false;
 
-      Map<CellElement, Map<String, String>> collections = null;
+      Map<CellElement, Map<String, Object>> collections = null;
 
       // Fill simple fields and map complex types
       for (CellElement element : elements) {
@@ -529,37 +512,55 @@ public class ElasticIndex implements IndexInterface {
 
       if (collections != null) {
         // Fill the collections now that they are sorted
-        for (Map.Entry<CellElement, Map<String, String>> collection : collections.entrySet()) {
+        boolean collectionNameStarted = false;
+        for (Map.Entry<CellElement, Map<String, Object>> collection : collections.entrySet()) {
           CellElement element = collection.getKey();
-
+          if(!collectionNameStarted){
+            builder.writeArrayFieldStart(element.name);
+            collectionNameStarted = true;
+          }
+          LOGGER.debug("Update Index- CellElement: {}", element);
           if (element.collectionValue != null) {
             switch (element.collectionValue.type) {
               case JSON:
-                builder.writeObjectFieldStart(element.name);
-
-                for (Map.Entry<String, String> en : collection.getValue().entrySet()) {
-                  String value = en.getValue();
+//                builder.writeStartObject();
+                LOGGER.debug("JSON Type- collectionValueEntrySet:{}", collection.getValue().entrySet());
+                for (Map.Entry<String, Object> en : collection.getValue().entrySet()) {
+                  Object value = en.getValue();
                   if (value == null) {
-                    builder.writeNullField(en.getKey());
+//                    builder.writeNullField(en.getKey());
                   } else {
-                    builder.writeFieldName(en.getKey());
-                    builder.writeRawValue(value);
+                    LOGGER.debug("JSON Type Key: {}, Value: {}", en.getKey(),value);
+                    //builder.writeFieldName(en.getKey());
+                    if(value instanceof String){
+                      builder.writeRawValue((String) value);
+                    } else {
+                      builder.writeObject(value);
+                    }
+
                   }
                 }
-                builder.writeEndObject();
+//                builder.writeEndObject();
                 break;
 
               case MAP:
-                builder.writeObjectFieldStart(element.name);
-                for (Map.Entry<String, String> entry : collection.getValue().entrySet()) {
-                  builder.writeStringField(entry.getKey(), entry.getValue());
+                builder.writeStartObject();
+                LOGGER.debug("Map Type collectionValueEntrySet: {}", collection.getValue().entrySet());
+                for (Map.Entry<String, Object> entry : collection.getValue().entrySet()) {
+                  if( entry.getValue() instanceof String){
+                    builder.writeStringField(entry.getKey(), (String) entry.getValue());
+                  } else {
+                    builder.writeObjectField(entry.getKey(), entry.getValue());
+                  }
+
                 }
                 builder.writeEndObject();
                 break;
 
               case LIST:
               case SET:
-                builder.writeArrayFieldStart(element.name);
+                builder.writeStartArray();
+                LOGGER.debug("LIST-SET Type collectionValueKeySet: {}", collection.getValue().keySet());
                 for (String value : collection.getValue().keySet()) {
                   builder.writeString(value);
                 }
@@ -570,6 +571,9 @@ public class ElasticIndex implements IndexInterface {
                 // There is no other CollectionType
             }
           }
+        }
+        if(collectionNameStarted){
+          builder.writeEndArray();
         }
       }
 
@@ -584,10 +588,10 @@ public class ElasticIndex implements IndexInterface {
       builder.writeEndObject();
       builder.close(); // calling close() early because we want the output now
       String jsonDoc = stringWriter.toString();
-
-      if (EsSecondaryIndex.DEBUG_SHOW_VALUES) {
+      //EsSecondaryIndex.DEBUG_SHOW_VALUES
+      if (true) {
         String operation = (insertOnly || usePipeline) ? "insert" : "upsert";
-        LOGGER.debug("Document {} index {} {} with content {}", typeName, operation, docId, jsonDoc);
+        LOGGER.info("Document {} index {} {} with content {}", typeName, operation, docId, jsonDoc);
       }
 
       String currentName = indexManager.getCurrentName();
@@ -658,7 +662,7 @@ public class ElasticIndex implements IndexInterface {
   public SearchResult search(@Nonnull QueryMetaData queryMetaData) {
     String queryString = queryMetaData.query;
 
-    LOGGER.trace("Index {} search with query {}", typeName, queryString);
+    LOGGER.info("Index {} search with query {}", typeName, queryString);
 
     if (!queryString.startsWith(JSON_PREFIX)) {
       queryString = String.format(QUERY_WRAPPER_WITH_SIZE, maxResults, escape(queryString));
@@ -674,7 +678,7 @@ public class ElasticIndex implements IndexInterface {
       throw new InvalidRequestException(e.getMessage());
     }
 
-    LOGGER.trace("Index {} search result: {}", typeName, searchResponse);
+    LOGGER.info("Index {} search result: {}", typeName, searchResponse);
 
     final List<SearchResultRow> idList = new ArrayList<>();
 
@@ -725,7 +729,7 @@ public class ElasticIndex implements IndexInterface {
     try {
       return mapper.readTree(query).get("query").toString();
     } catch (Exception e) {
-      LOGGER.trace("Could not extract query node from '{}' for Index {}", query, indexManager.getAliasName());
+      LOGGER.error("Could not extract query node from '{}' for Index {}", query, indexManager.getAliasName());
     }
     return query;
   }
@@ -735,7 +739,7 @@ public class ElasticIndex implements IndexInterface {
     if (!isValidateQuery) {
       return;
     }
-    LOGGER.trace("Validating query {}", query);
+    LOGGER.debug("Validating query {}", query);
 
     String esQuery = query;
 
@@ -759,18 +763,18 @@ public class ElasticIndex implements IndexInterface {
       formattedQuery = String.format(QUERY_WRAPPER_WITH_QUOTES, esQuery);
     }
 
-    LOGGER.trace("Validating query {}", formattedQuery);
+    LOGGER.debug("Validating query {}", formattedQuery);
     try {
       Validate.Builder validateBuilder = new Validate.Builder(formattedQuery);
       validateBuilder.setParameter(EXPLAIN, String.valueOf(true));
       JestResult res = execute(validateBuilder.build()).waitForResult();
       if (!res.isSucceeded()) {
-        LOGGER.info("Query {} is invalid", formattedQuery);
+        LOGGER.debug("Query {} is invalid", formattedQuery);
         throw new InvalidRequestException(res.getErrorMessage());
       } else {
         String valid = res.getJsonObject().get("valid").getAsString();
         if (Boolean.parseBoolean(valid)) {
-          LOGGER.trace("Query {} is valid", formattedQuery);
+          LOGGER.debug("Query {} is valid", formattedQuery);
         } else {
           throw new InvalidRequestException(res.getJsonObject().toString());
         }
