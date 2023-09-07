@@ -53,12 +53,13 @@ public class JsonUtils {
   private static final TimeZone GMT_ZONE = TimeZone.getTimeZone("GMT");
 
   private static final ObjectMapper OBJECT_MAPPER;
-  private static final JsonFactory JSON_FACTORY = new JsonFactory();
+  private static final JsonFactory JSON_FACTORY;
   private static final JsonParser GSON_PARSER = new JsonParser(); // com.google.gson.JsonParser
 
   static {
     OBJECT_MAPPER = new ObjectMapper().configure(ALLOW_SINGLE_QUOTES, true);
     OBJECT_MAPPER.getJsonFactory().enable(ALLOW_NON_NUMERIC_NUMBERS);
+    JSON_FACTORY = new JsonFactory(OBJECT_MAPPER);
   }
 
   @Nonnull
@@ -130,14 +131,16 @@ public class JsonUtils {
   }
 
   @Nonnull
-  static String stringMapToJson(@Nonnull Map<String, String> mapValue) throws IOException {
+  static String stringMapToJson(@Nonnull Map<String, Object> mapValue) throws IOException {
     StringWriter stringWriter = new StringWriter();
     JsonGenerator builder = JSON_FACTORY.createJsonGenerator(stringWriter);
 
     builder.writeStartObject();
 
-    for (Map.Entry<String, String> entry : mapValue.entrySet()) {
-      builder.writeStringField(entry.getKey(), entry.getValue());
+    for (Map.Entry<String, Object> entry : mapValue.entrySet()) {
+      if(entry.getValue() != null){
+        builder.writeObjectField(entry.getKey(), entry.getValue());
+      }
     }
 
     builder.writeEndObject();
@@ -147,14 +150,14 @@ public class JsonUtils {
   }
 
   @Nonnull
-  static String collectionToArray(@Nonnull Collection<String> collection) throws IOException {
+  static String collectionToArray(@Nonnull Collection<Object> collection) throws IOException {
     StringWriter stringWriter = new StringWriter();
     JsonGenerator builder = JSON_FACTORY.createJsonGenerator(stringWriter);
 
     builder.writeStartArray();
 
-    for (String entry : collection) {
-      builder.writeString(entry);
+    for (Object entry : collection) {
+      builder.writeObject(entry);
     }
 
     builder.writeEndArray();

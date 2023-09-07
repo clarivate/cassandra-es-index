@@ -22,19 +22,14 @@ import com.genesyslab.webme.commons.index.SearchResultRow;
 
 import com.google.gson.JsonObject;
 
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.ColumnDefinition;
-import org.apache.cassandra.db.Clustering;
-import org.apache.cassandra.db.ColumnFamilyStore;
-import org.apache.cassandra.db.DecoratedKey;
-import org.apache.cassandra.db.LivenessInfo;
-import org.apache.cassandra.db.PartitionColumns;
-import org.apache.cassandra.db.ReadCommand;
+import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.partitions.UnfilteredPartitionIterator;
 import org.apache.cassandra.db.rows.BTreeRow;
 import org.apache.cassandra.db.rows.BufferCell;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
@@ -57,8 +52,8 @@ public class FakePartitionIterator implements UnfilteredPartitionIterator {
   private final ColumnFamilyStore baseCfs;
   private final ReadCommand command;
   private final String searchId;
-  private final ColumnDefinition indexColDef;
-  private final PartitionColumns returnedColumns;
+  private final ColumnMetadata indexColDef;
+  private final RegularAndStaticColumns returnedColumns;
   private final JsonObject searchResultMetadata;
   private final boolean metadataRequested;
   private boolean isFirst = true;
@@ -69,19 +64,16 @@ public class FakePartitionIterator implements UnfilteredPartitionIterator {
     this.command = command;
     this.searchId = searchId;
     this.indexColDef = index.getIndexColDef();
-    this.returnedColumns = PartitionColumns.builder().add(indexColDef).build(); //can build once, it's always the same
+    this.returnedColumns = RegularAndStaticColumns.builder().add(indexColDef).build(); //can build once, it's always the same
     this.searchResultMetadata = searchResult.metadata;
     this.metadataRequested = command.columnFilter().queriedColumns().contains(indexColDef);
     Tracing.trace("ESI {} FakePartitionIterator initialized", searchId);
   }
 
-  @Override
-  public boolean isForThrift() {
-    return command.isForThrift();
-  }
+
 
   @Override
-  public CFMetaData metadata() {
+  public TableMetadata metadata() {
     return command.metadata();
   }
 
@@ -102,7 +94,7 @@ public class FakePartitionIterator implements UnfilteredPartitionIterator {
     }
 
     //Build the minimum row
-    Row.Builder rowBuilder = BTreeRow.unsortedBuilder(FBUtilities.nowInSeconds());
+    Row.Builder rowBuilder = BTreeRow.unsortedBuilder();
     rowBuilder.newRow(Clustering.EMPTY); //FIXME support for clustering
     rowBuilder.addPrimaryKeyLivenessInfo(LivenessInfo.EMPTY);
     rowBuilder.addRowDeletion(Row.Deletion.LIVE);
@@ -123,6 +115,6 @@ public class FakePartitionIterator implements UnfilteredPartitionIterator {
 
     //And PK value
     DecoratedKey partitionKey = baseCfs.getPartitioner().decorateKey(esResult.partitionKey);
-    return new SingleRowIterator(baseCfs.metadata, rowBuilder.build(), partitionKey, returnedColumns);
+    return new SingleRowIterator(baseCfs.metadata.get(), rowBuilder.build(), partitionKey, returnedColumns);
   }
 }

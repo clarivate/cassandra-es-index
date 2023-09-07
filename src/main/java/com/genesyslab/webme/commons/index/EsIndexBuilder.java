@@ -17,6 +17,7 @@ package com.genesyslab.webme.commons.index;
 
 import com.google.common.base.Stopwatch;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.compaction.CompactionInfo;
 import org.apache.cassandra.db.compaction.CompactionInterruptedException;
@@ -25,10 +26,12 @@ import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.index.SecondaryIndexBuilder;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.utils.FBUtilities;
+import org.apache.cassandra.utils.TimeUUID;
 import org.apache.cassandra.utils.UUIDGen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
 import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -42,7 +45,7 @@ public class EsIndexBuilder extends SecondaryIndexBuilder {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(EsIndexBuilder.class);
 
-  private final UUID compactionId = UUIDGen.getTimeUUID();
+  private final TimeUUID compactionId = TimeUUID.Generator.nextTimeUUID();
   private final EsSecondaryIndex index;
   private final Collection<SSTableReader> ssTables;
   private final long total;
@@ -92,6 +95,6 @@ public class EsIndexBuilder extends SecondaryIndexBuilder {
   }
 
   public CompactionInfo getCompactionInfo() {
-    return new CompactionInfo(null, OperationType.INDEX_BUILD, processed, total, null, compactionId);
+    return new CompactionInfo(null, OperationType.INDEX_BUILD, processed, total, compactionId, ImmutableSet.of());
   }
 }

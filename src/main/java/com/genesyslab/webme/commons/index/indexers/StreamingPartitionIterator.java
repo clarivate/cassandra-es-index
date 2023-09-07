@@ -22,8 +22,7 @@ import com.genesyslab.webme.commons.index.SearchResultRow;
 
 import com.google.gson.JsonObject;
 
-import org.apache.cassandra.config.CFMetaData;
-import org.apache.cassandra.config.ColumnDefinition;
+
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.ConsistencyLevel;
 import org.apache.cassandra.db.DecoratedKey;
@@ -38,6 +37,8 @@ import org.apache.cassandra.db.rows.BufferCell;
 import org.apache.cassandra.db.rows.Row;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.db.rows.UnfilteredRowIterator;
+import org.apache.cassandra.schema.ColumnMetadata;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.StorageProxy;
 import org.apache.cassandra.tracing.Tracing;
 import org.apache.cassandra.utils.ByteBufferUtil;
@@ -66,7 +67,7 @@ public class StreamingPartitionIterator implements UnfilteredPartitionIterator {
   private final PartitionRangeReadCommand command;
   private final String searchId;
   private final EsSecondaryIndex index;
-  private final ColumnDefinition indexColDef;
+  private final ColumnMetadata indexColDef;
   private final ConsistencyLevel consistencyLevel;
   private final JsonObject searchResultMetadata;
   private final boolean metadataRequested;
@@ -86,13 +87,13 @@ public class StreamingPartitionIterator implements UnfilteredPartitionIterator {
     Tracing.trace("ESI {} StreamingPartitionIterator initialized", searchId);
   }
 
-  @Override
-  public boolean isForThrift() {
-    return command.isForThrift();
-  }
+ // @Override
+//  public boolean isForThrift() {
+//    return command.isForThrift();
+//  }
 
   @Override
-  public CFMetaData metadata() {
+  public TableMetadata metadata() {
     return command.metadata();
   }
 
@@ -108,6 +109,7 @@ public class StreamingPartitionIterator implements UnfilteredPartitionIterator {
 
   @Override
   public UnfilteredRowIterator next() {
+    LOGGER.info("Next method:", esResultIterator);
     JsonObject jsonMetadata = null;
     RowIterator rowIterator = null;
     Row row = null;
@@ -119,7 +121,7 @@ public class StreamingPartitionIterator implements UnfilteredPartitionIterator {
       DecoratedKey partitionKey = baseCfs.getPartitioner().decorateKey(esResult.partitionKey);
 
       SinglePartitionReadCommand readCommand = SinglePartitionReadCommand.create(
-        baseCfs.metadata,
+        baseCfs.metadata.get(),
         command.nowInSec(),
         command.columnFilter(), //columns that will be returned
         RowFilter.NONE, //don't filter anything, as we pass token(id) it may prevent loading non local rows
@@ -159,7 +161,7 @@ public class StreamingPartitionIterator implements UnfilteredPartitionIterator {
 
       if (jsonMetadata != null) {
         int now = FBUtilities.nowInSeconds();
-        Row.Builder rowBuilder = BTreeRow.unsortedBuilder(now);
+        Row.Builder rowBuilder = BTreeRow.unsortedBuilder();
 
         rowBuilder.newRow(row.clustering());  //need to be first
         rowBuilder.addPrimaryKeyLivenessInfo(row.primaryKeyLivenessInfo());

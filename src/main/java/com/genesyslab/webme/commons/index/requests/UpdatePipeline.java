@@ -16,6 +16,7 @@
 package com.genesyslab.webme.commons.index.requests;
 
 import io.searchbox.action.GenericResultAbstractAction;
+import io.searchbox.client.config.ElasticsearchVersion;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -37,11 +38,10 @@ public class UpdatePipeline extends GenericResultAbstractAction {
 
     this.pipelineId = builder.pipelineId;
     this.payload = builder.source;
-    setURI(buildURI());
   }
 
   @Override
-  protected String buildURI() {
+  protected String buildURI(ElasticsearchVersion version) {
     return "/_ingest/pipeline/" + pipelineId;
   }
 

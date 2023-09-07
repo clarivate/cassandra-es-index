@@ -15,15 +15,16 @@
  */
 package com.genesyslab.webme.commons.index.indexers;
 
-import org.apache.cassandra.config.CFMetaData;
+
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletionTime;
-import org.apache.cassandra.db.PartitionColumns;
+import org.apache.cassandra.db.RegularAndStaticColumns;
 import org.apache.cassandra.db.rows.AbstractUnfilteredRowIterator;
 import org.apache.cassandra.db.rows.EncodingStats;
 import org.apache.cassandra.db.rows.RowIterator;
 import org.apache.cassandra.db.rows.Rows;
 import org.apache.cassandra.db.rows.Unfiltered;
+import org.apache.cassandra.schema.TableMetadata;
 
 /**
  * @author Jacques-Henri Berthemet 21/07/2017
@@ -32,7 +33,7 @@ public class SingleRowIterator extends AbstractUnfilteredRowIterator {
 
   private Unfiltered row;
 
-  public SingleRowIterator(CFMetaData metadata, Unfiltered row, DecoratedKey key, PartitionColumns columns) {
+  public SingleRowIterator(TableMetadata metadata, Unfiltered row, DecoratedKey key, RegularAndStaticColumns columns) {
     super(metadata, key, DeletionTime.LIVE, columns, Rows.EMPTY_STATIC_ROW, false, EncodingStats.NO_STATS);
     this.row = row;
   }

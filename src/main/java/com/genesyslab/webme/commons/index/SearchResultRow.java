@@ -20,6 +20,7 @@ import com.google.gson.JsonObject;
 import javax.annotation.Nonnull;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 /**
  * Created by Julien Moreau on 1/6/2017.
@@ -47,5 +48,15 @@ public class SearchResultRow {
   public SearchResultRow(@Nonnull String[] primaryKey, @Nonnull JsonObject docMetadata) {
     this.primaryKey = primaryKey;
     this.docMetadata = docMetadata;
+  }
+
+  @Override
+  public String toString() {
+    return "SearchResultRow{" +
+            "primaryKey=" + Arrays.toString(primaryKey) +
+            ", docMetadata=" + docMetadata +
+            ", partitionKey=" + partitionKey +
+            ", clusteringKeys=" + Arrays.toString(clusteringKeys) +
+            '}';
   }
 }

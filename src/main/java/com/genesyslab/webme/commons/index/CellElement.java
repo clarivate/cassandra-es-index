@@ -57,13 +57,23 @@ public class CellElement {
     return other instanceof CellElement && other.hashCode() == hashCode();
   }
 
+  @Override
+  public String toString() {
+    return "CellElement{" +
+            "clusteringKeys=" + clusteringKeys +
+            ", name='" + name + '\'' +
+            ", value='" + value + '\'' +
+            ", collectionValue=" + collectionValue +
+            '}';
+  }
+
   public static class CollectionValue {
     String name;
-    String value;
+    Object value;
     CollectionType type;
 
     @Nonnull
-    public static CollectionValue create(@Nonnull String name, @Nullable String value, @Nonnull CollectionType type) {
+    public static CollectionValue create(@Nonnull String name, @Nullable Object value, @Nonnull CollectionType type) {
       CollectionValue val = new CollectionValue();
       val.name = name;
       val.value = value;
@@ -80,6 +90,17 @@ public class CellElement {
       SET,
       LIST
     }
+
+    @Override
+    public String toString() {
+      return "CollectionValue{" +
+              "name='" + name + '\'' +
+              ", value='" + value + '\'' +
+              ", type=" + type +
+              '}';
+    }
   }
+
+
 
 }
